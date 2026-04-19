@@ -159,6 +159,18 @@ When multiple sources specify a session directory, `--session-dir` CLI flag take
 }
 ```
 
+### Context Window
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `maxContextWindow` | number | - | Cap the effective context window regardless of the model's reported limit. Useful for avoiding quality degradation at large context sizes. |
+
+```json
+{
+  "maxContextWindow": 200000
+}
+```
+
 ### Markdown
 
 | Setting | Type | Default | Description |

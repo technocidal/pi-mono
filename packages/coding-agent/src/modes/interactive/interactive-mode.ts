@@ -745,6 +745,14 @@ export class InteractiveMode {
 
 		void this.maybeWarnAboutAnthropicSubscriptionAuth();
 
+		const maxContextWindow = this.session.settingsManager.getMaxContextWindow();
+		const reserveTokens = this.session.settingsManager.getCompactionReserveTokens();
+		if (maxContextWindow !== undefined && maxContextWindow <= reserveTokens) {
+			this.showWarning(
+				`maxContextWindow (${maxContextWindow}) is less than or equal to compaction.reserveTokens (${reserveTokens}). Compaction will trigger immediately on every turn.`,
+			);
+		}
+
 		// Process initial messages
 		if (initialMessage) {
 			try {

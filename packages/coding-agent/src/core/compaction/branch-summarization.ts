@@ -77,6 +77,8 @@ export interface GenerateBranchSummaryOptions {
 	replaceInstructions?: boolean;
 	/** Tokens reserved for prompt + LLM response (default 16384) */
 	reserveTokens?: number;
+	/** Cap the effective context window regardless of model's reported limit */
+	maxContextWindow?: number;
 }
 
 // ============================================================================
@@ -284,10 +286,21 @@ export async function generateBranchSummary(
 	entries: SessionEntry[],
 	options: GenerateBranchSummaryOptions,
 ): Promise<BranchSummaryResult> {
-	const { model, apiKey, headers, signal, customInstructions, replaceInstructions, reserveTokens = 16384 } = options;
+	const {
+		model,
+		apiKey,
+		headers,
+		signal,
+		customInstructions,
+		replaceInstructions,
+		reserveTokens = 16384,
+		maxContextWindow,
+	} = options;
 
 	// Token budget = context window minus reserved space for prompt + response
-	const contextWindow = model.contextWindow || 128000;
+	const modelWindow = model.contextWindow || 128000;
+	const contextWindow =
+		maxContextWindow !== undefined && maxContextWindow > 0 ? Math.min(modelWindow, maxContextWindow) : modelWindow;
 	const tokenBudget = contextWindow - reserveTokens;
 
 	const { messages, fileOps } = prepareBranchEntries(entries, tokenBudget);

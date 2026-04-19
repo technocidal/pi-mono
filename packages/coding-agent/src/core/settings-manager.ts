@@ -105,6 +105,7 @@ export interface Settings {
 	showHardwareCursor?: boolean; // Show terminal cursor while still positioning it for IME
 	markdown?: MarkdownSettings;
 	sessionDir?: string; // Custom session storage directory (same format as --session-dir CLI flag)
+	maxContextWindow?: number; // Cap the effective context window regardless of model's reported limit
 }
 
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
@@ -687,6 +688,10 @@ export class SettingsManager {
 			reserveTokens: this.getCompactionReserveTokens(),
 			keepRecentTokens: this.getCompactionKeepRecentTokens(),
 		};
+	}
+
+	getMaxContextWindow(): number | undefined {
+		return this.settings.maxContextWindow;
 	}
 
 	getBranchSummarySettings(): { reserveTokens: number; skipPrompt: boolean } {

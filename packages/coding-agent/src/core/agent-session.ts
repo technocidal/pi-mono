@@ -1759,9 +1759,7 @@ export class AgentSession {
 		// Skip if message was aborted (user cancelled) - unless skipAbortedCheck is false
 		if (skipAbortedCheck && assistantMessage.stopReason === "aborted") return;
 
-		const contextWindow = this.model?.contextWindow ?? 0;
-
-		// Skip overflow check if the message came from a different model.
+		const contextWindow = this.getEffectiveContextWindow(this.model);
 		// This handles the case where user switched from a smaller-context model (e.g. opus)
 		// to a larger-context model (e.g. codex) - the overflow error from the old model
 		// shouldn't trigger compaction for the new model.
@@ -2404,7 +2402,7 @@ export class AgentSession {
 		if (message.stopReason !== "error" || !message.errorMessage) return false;
 
 		// Context overflow is handled by compaction, not retry
-		const contextWindow = this.model?.contextWindow ?? 0;
+		const contextWindow = this.getEffectiveContextWindow(this.model);
 		if (isContextOverflow(message, contextWindow)) return false;
 
 		const err = message.errorMessage;
@@ -2762,6 +2760,7 @@ export class AgentSession {
 					customInstructions,
 					replaceInstructions,
 					reserveTokens: branchSummarySettings.reserveTokens,
+					maxContextWindow: this.settingsManager.getMaxContextWindow(),
 				});
 				if (result.aborted) {
 					return { cancelled: true, aborted: true };
@@ -2932,11 +2931,21 @@ export class AgentSession {
 		};
 	}
 
+	getEffectiveContextWindow(model: Model<any> | undefined): number {
+		if (!model) return 0;
+		const modelWindow = model.contextWindow ?? 0;
+		const cap = this.settingsManager.getMaxContextWindow();
+		if (cap !== undefined && cap > 0) {
+			return Math.min(modelWindow, cap);
+		}
+		return modelWindow;
+	}
+
 	getContextUsage(): ContextUsage | undefined {
 		const model = this.model;
 		if (!model) return undefined;
 
-		const contextWindow = model.contextWindow ?? 0;
+		const contextWindow = this.getEffectiveContextWindow(model);
 		if (contextWindow <= 0) return undefined;
 
 		// After compaction, the last assistant usage reflects pre-compaction context size.

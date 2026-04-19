@@ -5,6 +5,7 @@
 ### Added
 
 - Added `ctx.ui.setWorkingVisible()` so extensions can hide the built-in interactive working loader row without reserving layout space, plus a border-status editor example that moves working state into a custom editor border ([#3674](https://github.com/badlogic/pi-mono/issues/3674))
+- Added `maxContextWindow` setting to cap the effective context window regardless of the model's reported limit. Useful for avoiding quality degradation at large context sizes (e.g. `"maxContextWindow": 200000`).
 
 ### Fixed
 
