@@ -118,9 +118,14 @@ export function isImageLine(line: string): boolean {
  * (e.g., main app vs extensions).
  */
 export function allocateImageId(): number {
-	// Use random ID in range [1, 0xffffffff] to avoid collisions
-	return Math.floor(Math.random() * 0xfffffffe) + 1;
+	// Sequential IDs in range [1, 65535] (16-bit). The low byte is encoded
+	// via 256-color foreground, the high byte via a third diacritic on each
+	// placeholder cell.  Wraps after 65534.
+	nextImageId = nextImageId >= 65534 ? 1 : nextImageId + 1;
+	return nextImageId;
 }
+
+let nextImageId = 0;
 
 export function encodeKitty(
 	base64Data: string,
@@ -179,6 +184,123 @@ export function deleteKittyImage(imageId: number): string {
  */
 export function deleteAllKittyImages(): string {
 	return `\x1b_Ga=d,d=A\x1b\\`;
+}
+
+/**
+ * Kitty Unicode placeholder character (U+10EEEE).
+ * Used as a text-flow placeholder that the terminal replaces with image pixels.
+ * Since it's in the supplementary plane, it's encoded as a surrogate pair in JS.
+ */
+const PLACEHOLDER_CHAR = "\u{10EEEE}";
+
+/**
+ * Diacritics used to encode row/column indices for Kitty Unicode placeholders.
+ * Index 0 = U+0305, index 1 = U+030D, etc.
+ * From https://github.com/kovidgoyal/kitty/blob/master/gen/rowcolumn-diacritics.txt
+ */
+// prettier-ignore
+const ROW_COLUMN_DIACRITICS: number[] = [
+	0x0305, 0x030d, 0x030e, 0x0310, 0x0312, 0x033d, 0x033e, 0x033f, 0x0346, 0x034a, 0x034b, 0x034c, 0x0350, 0x0351,
+	0x0352, 0x0357, 0x035b, 0x0363, 0x0364, 0x0365, 0x0366, 0x0367, 0x0368, 0x0369, 0x036a, 0x036b, 0x036c, 0x036d,
+	0x036e, 0x036f, 0x0483, 0x0484, 0x0485, 0x0486, 0x0487, 0x0592, 0x0593, 0x0594, 0x0595, 0x0597, 0x0598, 0x0599,
+	0x059c, 0x059d, 0x059e, 0x059f, 0x05a0, 0x05a1, 0x05a8, 0x05a9, 0x05ab, 0x05ac, 0x05af, 0x05c4, 0x0610, 0x0611,
+	0x0612, 0x0613, 0x0614, 0x0615, 0x0616, 0x0617, 0x0657, 0x0658, 0x0659, 0x065a, 0x065b, 0x065d, 0x065e, 0x06d6,
+	0x06d7, 0x06d8, 0x06d9, 0x06da, 0x06db, 0x06dc, 0x06df, 0x06e0, 0x06e1, 0x06e2, 0x06e4, 0x06e7, 0x06e8, 0x06eb,
+	0x06ec, 0x0730, 0x0732, 0x0733, 0x0735, 0x0736, 0x073a, 0x073d, 0x073f, 0x0740, 0x0741, 0x0743, 0x0745, 0x0747,
+	0x0749, 0x074a, 0x07eb, 0x07ec, 0x07ed, 0x07ee, 0x07ef, 0x07f0, 0x07f1, 0x07f3, 0x0816, 0x0817, 0x0818, 0x0819,
+	0x081b, 0x081c, 0x081d, 0x081e, 0x081f, 0x0820, 0x0821, 0x0822, 0x0823, 0x0825, 0x0826, 0x0827, 0x0829, 0x082a,
+	0x082b, 0x082c, 0x082d, 0x0951, 0x0953, 0x0954, 0x0f82, 0x0f83, 0x0f86, 0x0f87, 0x135d, 0x135e, 0x135f, 0x17dd,
+	0x193a, 0x1a17, 0x1a75, 0x1a76, 0x1a77, 0x1a78, 0x1a79, 0x1a7a, 0x1a7b, 0x1a7c, 0x1b6b, 0x1b6d, 0x1b6e, 0x1b6f,
+	0x1b70, 0x1b71, 0x1b72, 0x1b73, 0x1cd0, 0x1cd1, 0x1cd2, 0x1cda, 0x1cdb, 0x1ce0, 0x1dc0, 0x1dc1, 0x1dc3, 0x1dc4,
+	0x1dc5, 0x1dc6, 0x1dc7, 0x1dc8, 0x1dc9, 0x1dcb, 0x1dcc, 0x1dd1, 0x1dd2, 0x1dd3, 0x1dd4, 0x1dd5, 0x1dd6, 0x1dd7,
+	0x1dd8, 0x1dd9, 0x1dda, 0x1ddb, 0x1ddc, 0x1ddd, 0x1dde, 0x1ddf, 0x1de0, 0x1de1, 0x1de2, 0x1de3, 0x1de4, 0x1de5,
+	0x1de6, 0x1dfe, 0x20d0, 0x20d1, 0x20d4, 0x20d5, 0x20d6, 0x20d7, 0x20db, 0x20dc, 0x20e1, 0x20e7, 0x20e9, 0x20f0,
+	0x2cef, 0x2cf0, 0x2cf1, 0x2de0, 0x2de1, 0x2de2, 0x2de3, 0x2de4, 0x2de5, 0x2de6, 0x2de7, 0x2de8, 0x2de9, 0x2dea,
+	0x2deb, 0x2dec, 0x2ded, 0x2dee, 0x2def, 0x2df0, 0x2df1, 0x2df2, 0x2df3, 0x2df4, 0x2df5, 0x2df6, 0x2df7, 0x2df8,
+	0x2df9, 0x2dfa, 0x2dfb, 0x2dfc, 0x2dfd, 0x2dfe, 0x2dff, 0xa66f, 0xa67c, 0xa67d, 0xa6f0, 0xa6f1, 0xa8e0, 0xa8e1,
+	0xa8e2, 0xa8e3, 0xa8e4, 0xa8e5,
+];
+
+/**
+ * Transmit image data to the terminal and create a virtual placement.
+ * The image is stored but NOT displayed — use placeholder characters to display it.
+ * @returns The escape sequence to send to the terminal
+ */
+export function transmitKittyImage(base64Data: string, imageId: number, columns: number, rows: number): string {
+	const CHUNK_SIZE = 4096;
+	const params = `a=T,U=1,f=100,q=2,i=${imageId},c=${columns},r=${rows}`;
+
+	if (base64Data.length <= CHUNK_SIZE) {
+		return `\x1b_G${params};${base64Data}\x1b\\`;
+	}
+
+	const chunks: string[] = [];
+	let offset = 0;
+	let isFirst = true;
+
+	while (offset < base64Data.length) {
+		const chunk = base64Data.slice(offset, offset + CHUNK_SIZE);
+		const isLast = offset + CHUNK_SIZE >= base64Data.length;
+
+		if (isFirst) {
+			chunks.push(`\x1b_G${params},m=1;${chunk}\x1b\\`);
+			isFirst = false;
+		} else if (isLast) {
+			chunks.push(`\x1b_Gm=0;${chunk}\x1b\\`);
+		} else {
+			chunks.push(`\x1b_Gm=1;${chunk}\x1b\\`);
+		}
+
+		offset += CHUNK_SIZE;
+	}
+
+	return chunks.join("");
+}
+
+/**
+ * Generate Unicode placeholder lines for a Kitty image.
+ * Each line contains `columns` placeholder characters with row/column diacritics.
+ * The image ID is encoded in the foreground color using 24-bit true color.
+ * @returns Array of `rows` strings, each a normal text line
+ */
+export function encodeKittyPlaceholder(imageId: number, columns: number, rows: number): string[] {
+	// Low byte via 256-color foreground, high byte via third (MSB) diacritic.
+	// This gives 16-bit image IDs (up to 65535).
+	const lowByte = imageId & 0xff;
+	const highByte = (imageId >> 8) & 0xff;
+	const colorStart = `\x1b[38;5;${lowByte}m`;
+	const colorEnd = "\x1b[39m";
+	const msbDiacritic =
+		highByte > 0 && highByte < ROW_COLUMN_DIACRITICS.length
+			? String.fromCodePoint(ROW_COLUMN_DIACRITICS[highByte])
+			: "";
+
+	const lines: string[] = [];
+	for (let row = 0; row < rows; row++) {
+		const rowDiacritic =
+			row < ROW_COLUMN_DIACRITICS.length
+				? String.fromCodePoint(ROW_COLUMN_DIACRITICS[row])
+				: String.fromCodePoint(ROW_COLUMN_DIACRITICS[0]);
+
+		let line = colorStart;
+		for (let col = 0; col < columns; col++) {
+			const colDiacritic =
+				col < ROW_COLUMN_DIACRITICS.length
+					? String.fromCodePoint(ROW_COLUMN_DIACRITICS[col])
+					: String.fromCodePoint(ROW_COLUMN_DIACRITICS[0]);
+			// Each cell: placeholder char + row diacritic + column diacritic [+ MSB diacritic]
+			line += PLACEHOLDER_CHAR + rowDiacritic + colDiacritic + msbDiacritic;
+		}
+		line += colorEnd;
+		lines.push(line);
+	}
+
+	return lines;
+}
+
+/** Check if a line contains Kitty Unicode placeholder characters. */
+export function isPlaceholderLine(line: string): boolean {
+	return line.includes(PLACEHOLDER_CHAR);
 }
 
 export function encodeITerm2(

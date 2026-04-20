@@ -102,6 +102,31 @@ export class VirtualTerminal implements Terminal {
 
 	setProgress(_active: boolean): void {}
 
+	moveTo(row: number, col: number): void {
+		this.xterm.write(`\x1b[${row};${col}H`);
+	}
+
+	private _isAlternateScreen = false;
+
+	enterAlternateScreen(): void {
+		if (this._isAlternateScreen) return;
+		this.xterm.write("\x1b[?1049h");
+		this._isAlternateScreen = true;
+	}
+
+	leaveAlternateScreen(): void {
+		if (!this._isAlternateScreen) return;
+		this.xterm.write("\x1b[?1049l");
+		this._isAlternateScreen = false;
+	}
+
+	get isAlternateScreen(): boolean {
+		return this._isAlternateScreen;
+	}
+
+	enableMouseReporting(): void {}
+	disableMouseReporting(): void {}
+
 	// Test-specific methods not in Terminal interface
 
 	/**

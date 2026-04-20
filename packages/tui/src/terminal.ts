@@ -41,6 +41,9 @@ export interface Terminal {
 	// Cursor positioning (relative to current position)
 	moveBy(lines: number): void; // Move cursor up (negative) or down (positive) by N lines
 
+	// Absolute cursor positioning (1-indexed row and column)
+	moveTo(row: number, col: number): void;
+
 	// Cursor visibility
 	hideCursor(): void; // Hide the cursor
 	showCursor(): void; // Show the cursor
@@ -49,6 +52,15 @@ export interface Terminal {
 	clearLine(): void; // Clear current line
 	clearFromCursor(): void; // Clear from cursor to end of screen
 	clearScreen(): void; // Clear entire screen and move cursor to (0,0)
+
+	// Alternate screen buffer
+	enterAlternateScreen(): void; // Switch to alternate screen buffer (saves main buffer)
+	leaveAlternateScreen(): void; // Restore main screen buffer
+	get isAlternateScreen(): boolean; // Whether alternate screen is active
+
+	// Mouse reporting
+	enableMouseReporting(): void; // Enable SGR mouse button tracking (wheel events)
+	disableMouseReporting(): void; // Disable mouse reporting
 
 	// Title operations
 	setTitle(title: string): void; // Set terminal window title
@@ -66,6 +78,8 @@ export class ProcessTerminal implements Terminal {
 	private resizeHandler?: () => void;
 	private _kittyProtocolActive = false;
 	private _modifyOtherKeysActive = false;
+	private _isAlternateScreen = false;
+	private _mouseReportingActive = false;
 	private stdinBuffer?: StdinBuffer;
 	private stdinDataHandler?: (data: string) => void;
 	private progressInterval?: ReturnType<typeof setInterval>;
@@ -268,6 +282,37 @@ export class ProcessTerminal implements Terminal {
 		}
 	}
 
+	get isAlternateScreen(): boolean {
+		return this._isAlternateScreen;
+	}
+
+	enterAlternateScreen(): void {
+		if (this._isAlternateScreen) return;
+		process.stdout.write("\x1b[?1049h");
+		this._isAlternateScreen = true;
+	}
+
+	leaveAlternateScreen(): void {
+		if (!this._isAlternateScreen) return;
+		process.stdout.write("\x1b[?1049l");
+		this._isAlternateScreen = false;
+	}
+
+	enableMouseReporting(): void {
+		if (this._mouseReportingActive) return;
+		// Enable button event tracking + SGR extended mouse mode
+		// 1002 = button event tracking (reports press, release, wheel)
+		// 1006 = SGR extended mode (sends \x1b[<btn;col;row M/m)
+		process.stdout.write("\x1b[?1002h\x1b[?1006h");
+		this._mouseReportingActive = true;
+	}
+
+	disableMouseReporting(): void {
+		if (!this._mouseReportingActive) return;
+		process.stdout.write("\x1b[?1006l\x1b[?1002l");
+		this._mouseReportingActive = false;
+	}
+
 	stop(): void {
 		if (this.clearProgressInterval()) {
 			process.stdout.write(TERMINAL_PROGRESS_CLEAR_SEQUENCE);
@@ -275,6 +320,9 @@ export class ProcessTerminal implements Terminal {
 
 		// Disable bracketed paste mode
 		process.stdout.write("\x1b[?2004l");
+
+		// Disable mouse reporting
+		this.disableMouseReporting();
 
 		// Disable Kitty keyboard protocol if not already done by drainInput()
 		if (this._kittyProtocolActive) {
@@ -286,6 +334,12 @@ export class ProcessTerminal implements Terminal {
 			process.stdout.write("\x1b[>4;0m");
 			this._modifyOtherKeysActive = false;
 		}
+
+		// Leave alternate screen AFTER disabling keyboard protocols.
+		// Protocols were enabled inside the alternate screen; leaving first
+		// would restore the main screen state (no protocol), making the
+		// disable sequences no-ops and leaking raw escape codes to the shell.
+		this.leaveAlternateScreen();
 
 		// Clean up StdinBuffer
 		if (this.stdinBuffer) {
@@ -363,6 +417,10 @@ export class ProcessTerminal implements Terminal {
 
 	clearScreen(): void {
 		process.stdout.write("\x1b[2J\x1b[H"); // Clear screen and move to home (1,1)
+	}
+
+	moveTo(row: number, col: number): void {
+		process.stdout.write(`\x1b[${row};${col}H`);
 	}
 
 	setTitle(title: string): void {
