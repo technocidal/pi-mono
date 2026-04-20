@@ -105,6 +105,7 @@ export interface Settings {
 	showHardwareCursor?: boolean; // Show terminal cursor while still positioning it for IME
 	markdown?: MarkdownSettings;
 	sessionDir?: string; // Custom session storage directory (same format as --session-dir CLI flag)
+	fullscreen?: boolean; // default: false (use alternate screen buffer for fullscreen TUI mode)
 }
 
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
@@ -1048,5 +1049,15 @@ export class SettingsManager {
 
 	getCodeBlockIndent(): string {
 		return this.settings.markdown?.codeBlockIndent ?? "  ";
+	}
+
+	getFullscreen(): boolean {
+		return this.settings.fullscreen ?? false;
+	}
+
+	setFullscreen(enabled: boolean): void {
+		this.globalSettings.fullscreen = enabled;
+		this.markModified("fullscreen");
+		this.save();
 	}
 }

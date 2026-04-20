@@ -52,6 +52,12 @@ export interface AppKeybindings {
 	"app.tree.filter.all": true;
 	"app.tree.filter.cycleForward": true;
 	"app.tree.filter.cycleBackward": true;
+	"app.scroll.up": true;
+	"app.scroll.down": true;
+	"app.scroll.pageUp": true;
+	"app.scroll.pageDown": true;
+	"app.scroll.top": true;
+	"app.scroll.bottom": true;
 }
 
 export type AppKeybinding = keyof AppKeybindings;
@@ -198,6 +204,30 @@ export const KEYBINDINGS = {
 	"app.tree.filter.cycleBackward": {
 		defaultKeys: "shift+ctrl+o",
 		description: "Tree filter: cycle backward",
+	},
+	"app.scroll.up": {
+		defaultKeys: "shift+up",
+		description: "Scroll content up (fullscreen)",
+	},
+	"app.scroll.down": {
+		defaultKeys: "shift+down",
+		description: "Scroll content down (fullscreen)",
+	},
+	"app.scroll.pageUp": {
+		defaultKeys: "shift+pageUp",
+		description: "Scroll content page up (fullscreen)",
+	},
+	"app.scroll.pageDown": {
+		defaultKeys: "shift+pageDown",
+		description: "Scroll content page down (fullscreen)",
+	},
+	"app.scroll.top": {
+		defaultKeys: "shift+home",
+		description: "Scroll to top (fullscreen)",
+	},
+	"app.scroll.bottom": {
+		defaultKeys: "shift+end",
+		description: "Scroll to bottom (fullscreen)",
 	},
 } as const satisfies KeybindingDefinitions;
 

@@ -238,12 +238,15 @@ export interface InteractiveModeOptions {
 	initialMessages?: string[];
 	/** Force verbose startup (overrides quietStartup setting) */
 	verbose?: boolean;
+	/** Enable fullscreen mode (overrides settings.json) */
+	fullscreen?: boolean;
 }
 
 export class InteractiveMode {
 	private runtimeHost: AgentSessionRuntime;
 	private ui: TUI;
 	private chatContainer: Container;
+	private contentContainer: Container;
 	private pendingMessagesContainer: Container;
 	private statusContainer: Container;
 	private defaultEditor: CustomEditor;
@@ -375,6 +378,7 @@ export class InteractiveMode {
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
 		this.headerContainer = new Container();
 		this.chatContainer = new Container();
+		this.contentContainer = new Container();
 		this.pendingMessagesContainer = new Container();
 		this.statusContainer = new Container();
 		this.widgetContainerAbove = new Container();
@@ -647,15 +651,28 @@ export class InteractiveMode {
 			this.headerContainer.addChild(this.builtInHeader);
 		}
 
-		this.ui.addChild(this.chatContainer);
-		this.ui.addChild(this.pendingMessagesContainer);
-		this.ui.addChild(this.statusContainer);
+		// Build content container (wraps scrollable content for fullscreen mode)
+		this.contentContainer.addChild(this.chatContainer);
+		this.contentContainer.addChild(this.pendingMessagesContainer);
+		this.contentContainer.addChild(this.statusContainer);
+
+		this.ui.addChild(this.contentContainer);
 		this.renderWidgets(); // Initialize with default spacer
 		this.ui.addChild(this.widgetContainerAbove);
 		this.ui.addChild(this.editorContainer);
 		this.ui.addChild(this.widgetContainerBelow);
 		this.ui.addChild(this.footer);
 		this.ui.setFocus(this.editor);
+
+		// Set up fullscreen mode if enabled (CLI flag > env var > settings.json)
+		const fullscreenEnabled =
+			this.options.fullscreen ??
+			(process.env.PI_FULLSCREEN === "1" ? true : undefined) ??
+			this.settingsManager.getFullscreen();
+		if (fullscreenEnabled) {
+			this.setupFullscreenRegions();
+			this.ui.setFullscreen(true);
+		}
 
 		this.setupKeyHandlers();
 		this.setupEditorSubmitHandler();
@@ -1899,10 +1916,12 @@ export class InteractiveMode {
 			// Create and add custom footer, passing the data provider
 			this.customFooter = factory(this.ui, theme, this.footerDataProvider);
 			this.ui.addChild(this.customFooter);
+			if (this.ui.fullscreen) this.ui.setRegion("footer", this.customFooter);
 		} else {
 			// Restore built-in footer
 			this.customFooter = undefined;
 			this.ui.addChild(this.footer);
+			if (this.ui.fullscreen) this.ui.setRegion("footer", this.footer);
 		}
 
 		this.ui.requestRender();
@@ -2384,6 +2403,20 @@ export class InteractiveMode {
 	// Key Handlers
 	// =========================================================================
 
+	/** Configure TUI regions for fullscreen layout. */
+	private setupFullscreenRegions(): void {
+		// Build an editor+widgets container for the editor region
+		const editorRegion = new Container();
+		editorRegion.addChild(this.widgetContainerAbove);
+		editorRegion.addChild(this.editorContainer);
+		editorRegion.addChild(this.widgetContainerBelow);
+
+		this.ui.setRegion("header", this.headerContainer);
+		this.ui.setRegion("content", this.contentContainer);
+		this.ui.setRegion("editor", editorRegion);
+		this.ui.setRegion("footer", this.footer);
+	}
+
 	private setupKeyHandlers(): void {
 		// Set up handlers on defaultEditor - they use this.editor for text access
 		// so they work correctly regardless of which editor is active
@@ -2425,6 +2458,38 @@ export class InteractiveMode {
 
 		// Global debug handler on TUI (works regardless of focus)
 		this.ui.onDebug = () => this.handleDebugCommand();
+
+		// Fullscreen scroll keybindings (global input listener)
+		if (this.ui.fullscreen) {
+			this.ui.addInputListener((data) => {
+				if (this.keybindings.matches(data, "app.scroll.up")) {
+					this.ui.scrollContent(-1);
+					return { consume: true };
+				}
+				if (this.keybindings.matches(data, "app.scroll.down")) {
+					this.ui.scrollContent(1);
+					return { consume: true };
+				}
+				if (this.keybindings.matches(data, "app.scroll.pageUp")) {
+					this.ui.scrollContentPage(-1);
+					return { consume: true };
+				}
+				if (this.keybindings.matches(data, "app.scroll.pageDown")) {
+					this.ui.scrollContentPage(1);
+					return { consume: true };
+				}
+				if (this.keybindings.matches(data, "app.scroll.top")) {
+					this.ui.scrollContentToTop();
+					return { consume: true };
+				}
+				if (this.keybindings.matches(data, "app.scroll.bottom")) {
+					this.ui.scrollContentToBottom();
+					return { consume: true };
+				}
+				return undefined;
+			});
+		}
+
 		this.defaultEditor.onAction("app.model.select", () => this.showModelSelector());
 		this.defaultEditor.onAction("app.tools.expand", () => this.toggleToolOutputExpansion());
 		this.defaultEditor.onAction("app.thinking.toggle", () => this.toggleThinkingBlockVisibility());
@@ -3788,6 +3853,7 @@ export class InteractiveMode {
 					quietStartup: this.settingsManager.getQuietStartup(),
 					clearOnShrink: this.settingsManager.getClearOnShrink(),
 					showTerminalProgress: this.settingsManager.getShowTerminalProgress(),
+					fullscreen: this.settingsManager.getFullscreen(),
 				},
 				{
 					onAutoCompactChange: (enabled) => {
@@ -3900,6 +3966,14 @@ export class InteractiveMode {
 					},
 					onShowTerminalProgressChange: (enabled) => {
 						this.settingsManager.setShowTerminalProgress(enabled);
+					onFullscreenChange: (enabled) => {
+						this.settingsManager.setFullscreen(enabled);
+						if (enabled && !this.ui.fullscreen) {
+							this.setupFullscreenRegions();
+							this.ui.setFullscreen(true);
+						} else if (!enabled && this.ui.fullscreen) {
+							this.ui.setFullscreen(false);
+						}
 					},
 					onCancel: () => {
 						done();

@@ -53,6 +53,7 @@ export interface SettingsConfig {
 	quietStartup: boolean;
 	clearOnShrink: boolean;
 	showTerminalProgress: boolean;
+	fullscreen: boolean;
 }
 
 export interface SettingsCallbacks {
@@ -79,6 +80,7 @@ export interface SettingsCallbacks {
 	onQuietStartupChange: (enabled: boolean) => void;
 	onClearOnShrinkChange: (enabled: boolean) => void;
 	onShowTerminalProgressChange: (enabled: boolean) => void;
+	onFullscreenChange: (enabled: boolean) => void;
 	onCancel: () => void;
 }
 
@@ -381,6 +383,13 @@ export class SettingsSelectorComponent extends Container {
 			label: "Terminal progress",
 			description: "Show OSC 9;4 progress indicators in the terminal tab bar",
 			currentValue: config.showTerminalProgress ? "true" : "false",
+		// Fullscreen toggle (insert after clear-on-shrink)
+		const clearOnShrinkIndex = items.findIndex((item) => item.id === "clear-on-shrink");
+		items.splice(clearOnShrinkIndex + 1, 0, {
+			id: "fullscreen",
+			label: "Fullscreen mode",
+			description: "Use alternate screen buffer for a fullscreen TUI layout",
+			currentValue: config.fullscreen ? "true" : "false",
 			values: ["true", "false"],
 		});
 
@@ -454,6 +463,8 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "terminal-progress":
 						callbacks.onShowTerminalProgressChange(newValue === "true");
+					case "fullscreen":
+						callbacks.onFullscreenChange(newValue === "true");
 						break;
 				}
 			},
