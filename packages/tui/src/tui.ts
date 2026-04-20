@@ -70,6 +70,22 @@ export const CURSOR_MARKER = "\x1b_pi:c\x07";
 export { visibleWidth };
 
 /**
+ * Region identifiers for fullscreen layout.
+ * Components assigned to regions are laid out in a fixed viewport:
+ * - header: fixed height at top
+ * - content: scrollable area filling remaining space
+ * - editor: fixed height above footer
+ * - footer: fixed height at bottom
+ */
+export type RegionId = "header" | "content" | "editor" | "footer";
+
+/** Fullscreen layout options */
+export interface FullscreenOptions {
+	/** Minimum terminal rows required for fullscreen mode (default: 10) */
+	minRows?: number;
+}
+
+/**
  * Anchor position for overlays
  */
 export type OverlayAnchor =
@@ -247,6 +263,16 @@ export class TUI extends Container {
 		focusOrder: number;
 	}[] = [];
 
+	// Fullscreen mode state
+	private _fullscreen = false;
+	private _fullscreenWasActive = false; // Track fullscreen across stop/start cycles
+	private fullscreenOptions: FullscreenOptions = {};
+	private regions = new Map<RegionId, Component>();
+	private contentScrollOffset = 0;
+	private contentTotalLines = 0;
+	private userScrolled = false; // true if user manually scrolled up
+	private previousFullscreenLines: string[] = [];
+
 	constructor(terminal: Terminal, showHardwareCursor?: boolean) {
 		super();
 		this.terminal = terminal;
@@ -283,6 +309,106 @@ export class TUI extends Container {
 	 */
 	setClearOnShrink(enabled: boolean): void {
 		this.clearOnShrink = enabled;
+	}
+
+	/** Whether fullscreen mode is active */
+	get fullscreen(): boolean {
+		return this._fullscreen;
+	}
+
+	/** Enable or disable fullscreen mode. Enters/leaves alternate screen buffer. */
+	setFullscreen(enabled: boolean, options?: FullscreenOptions): void {
+		if (this._fullscreen === enabled) return;
+		this._fullscreen = enabled;
+		if (options) this.fullscreenOptions = options;
+		if (enabled) {
+			this.terminal.enterAlternateScreen();
+			this.terminal.enableMouseReporting();
+			this.terminal.clearScreen();
+			this.contentScrollOffset = 0;
+			this.userScrolled = false;
+			this.previousFullscreenLines = [];
+		} else {
+			this.terminal.disableMouseReporting();
+			this.terminal.leaveAlternateScreen();
+			this.previousFullscreenLines = [];
+			// Reset scrollback-mode state so it re-renders cleanly
+			this.previousLines = [];
+			this.previousWidth = 0;
+			this.previousHeight = 0;
+			this.cursorRow = 0;
+			this.hardwareCursorRow = 0;
+			this.maxLinesRendered = 0;
+			this.previousViewportTop = 0;
+		}
+		// Invalidate all components so images re-transmit in the new screen context
+		this.invalidate();
+		this.requestRender(true);
+	}
+
+	/** Assign a component to a fullscreen layout region. */
+	setRegion(id: RegionId, component: Component): void {
+		this.regions.set(id, component);
+	}
+
+	/** Remove a region assignment. */
+	clearRegion(id: RegionId): void {
+		this.regions.delete(id);
+	}
+
+	/** Scroll the content region by a number of lines (positive = down, negative = up). */
+	scrollContent(delta: number): void {
+		if (!this._fullscreen) return;
+		const maxOffset = Math.max(0, this.contentTotalLines - this.getContentHeight());
+		const newOffset = Math.max(0, Math.min(maxOffset, this.contentScrollOffset + delta));
+		if (newOffset !== this.contentScrollOffset) {
+			this.contentScrollOffset = newOffset;
+			this.userScrolled = newOffset < maxOffset;
+			this.requestRender();
+		}
+	}
+
+	/** Scroll content region by one page. */
+	scrollContentPage(direction: 1 | -1): void {
+		const pageSize = Math.max(1, this.getContentHeight() - 1);
+		this.scrollContent(direction * pageSize);
+	}
+
+	/** Scroll to the top of the content region. */
+	scrollContentToTop(): void {
+		if (!this._fullscreen) return;
+		if (this.contentScrollOffset !== 0) {
+			this.contentScrollOffset = 0;
+			this.userScrolled = true;
+			this.requestRender();
+		}
+	}
+
+	/** Scroll to the bottom of the content region. */
+	scrollContentToBottom(): void {
+		if (!this._fullscreen) return;
+		const maxOffset = Math.max(0, this.contentTotalLines - this.getContentHeight());
+		if (this.contentScrollOffset !== maxOffset) {
+			this.contentScrollOffset = maxOffset;
+			this.userScrolled = false;
+			this.requestRender();
+		}
+	}
+
+	/** Whether the user has manually scrolled away from the bottom. */
+	get isContentScrolledUp(): boolean {
+		return this.userScrolled;
+	}
+
+	/** Get the available height for the content region. */
+	private getContentHeight(): number {
+		const height = this.terminal.rows;
+		let usedRows = 0;
+		for (const [id, comp] of this.regions) {
+			if (id === "content") continue;
+			usedRows += comp.render(this.terminal.columns).length;
+		}
+		return Math.max(1, height - usedRows);
 	}
 
 	setFocus(component: Component | null): void {
@@ -422,6 +548,16 @@ export class TUI extends Container {
 			() => this.requestRender(),
 		);
 		this.terminal.hideCursor();
+		if (this._fullscreen || this._fullscreenWasActive) {
+			this._fullscreen = true;
+			this._fullscreenWasActive = false;
+			this.terminal.enterAlternateScreen();
+			this.terminal.enableMouseReporting();
+			this.terminal.clearScreen();
+			this.previousFullscreenLines = [];
+			// Re-transmit images since alternate screen is a fresh context
+			this.invalidate();
+		}
 		this.queryCellSize();
 		this.requestRender();
 	}
@@ -453,16 +589,24 @@ export class TUI extends Container {
 			clearTimeout(this.renderTimer);
 			this.renderTimer = undefined;
 		}
-		// Move cursor to the end of the content to prevent overwriting/artifacts on exit
-		if (this.previousLines.length > 0) {
-			const targetRow = this.previousLines.length; // Line after the last content
-			const lineDiff = targetRow - this.hardwareCursorRow;
-			if (lineDiff > 0) {
-				this.terminal.write(`\x1b[${lineDiff}B`);
-			} else if (lineDiff < 0) {
-				this.terminal.write(`\x1b[${-lineDiff}A`);
+
+		if (this._fullscreen) {
+			// In fullscreen, just leave alternate screen -- scrollback is preserved
+			this.terminal.leaveAlternateScreen();
+			this._fullscreenWasActive = true;
+			this.previousFullscreenLines = [];
+		} else {
+			// Move cursor to the end of the content to prevent overwriting/artifacts on exit
+			if (this.previousLines.length > 0) {
+				const targetRow = this.previousLines.length; // Line after the last content
+				const lineDiff = targetRow - this.hardwareCursorRow;
+				if (lineDiff > 0) {
+					this.terminal.write(`\x1b[${lineDiff}B`);
+				} else if (lineDiff < 0) {
+					this.terminal.write(`\x1b[${-lineDiff}A`);
+				}
+				this.terminal.write("\r\n");
 			}
-			this.terminal.write("\r\n");
 		}
 
 		this.terminal.showCursor();
@@ -472,6 +616,7 @@ export class TUI extends Container {
 	requestRender(force = false): void {
 		if (force) {
 			this.previousLines = [];
+			this.previousFullscreenLines = [];
 			this.previousWidth = -1; // -1 triggers widthChanged, forcing a full clear
 			this.previousHeight = -1; // -1 triggers heightChanged, forcing a full clear
 			this.cursorRow = 0;
@@ -541,6 +686,11 @@ export class TUI extends Container {
 			return;
 		}
 
+		// Handle mouse events in fullscreen mode (consume all mouse sequences)
+		if (this._fullscreen && this.consumeMouseEvent(data)) {
+			return;
+		}
+
 		// Global debug key handler (Shift+Ctrl+D)
 		if (matchesKey(data, "shift+ctrl+d") && this.onDebug) {
 			this.onDebug();
@@ -590,6 +740,32 @@ export class TUI extends Container {
 		// Invalidate all components so images re-render with correct dimensions.
 		this.invalidate();
 		this.requestRender();
+		return true;
+	}
+
+	/**
+	 * Parse SGR mouse events and handle wheel scrolling.
+	 * SGR format: ESC [ < button ; col ; row M (press) or m (release)
+	 * Wheel up: button 64, wheel down: button 65
+	 * Returns true if the event was consumed.
+	 */
+	private consumeMouseEvent(data: string): boolean {
+		const match = data.match(/^\x1b\[<(\d+);\d+;\d+[Mm]$/);
+		if (!match) return false;
+
+		const button = parseInt(match[1], 10);
+		// Wheel up = 64, wheel down = 65
+		if (button === 64) {
+			this.scrollContent(-3);
+			return true;
+		}
+		if (button === 65) {
+			this.scrollContent(3);
+			return true;
+		}
+
+		// Consume all other mouse events (clicks, drags) so they don't leak
+		// to focused components as garbage input
 		return true;
 	}
 
@@ -887,6 +1063,10 @@ export class TUI extends Container {
 
 	private doRender(): void {
 		if (this.stopped) return;
+		if (this._fullscreen) {
+			this.doRenderFullscreen();
+			return;
+		}
 		const width = this.terminal.columns;
 		const height = this.terminal.rows;
 		const widthChanged = this.previousWidth !== 0 && this.previousWidth !== width;
@@ -1239,5 +1419,173 @@ export class TUI extends Container {
 		} else {
 			this.terminal.hideCursor();
 		}
+	}
+
+	/**
+	 * Fullscreen render path: renders into a fixed viewport using the alternate screen buffer.
+	 * Layout: header (top, fixed) | content (middle, scrollable) | editor (fixed) | footer (bottom, fixed)
+	 */
+	private doRenderFullscreen(): void {
+		const width = this.terminal.columns;
+		const height = this.terminal.rows;
+		const minRows = this.fullscreenOptions.minRows ?? 10;
+
+		// Too-small terminal guard
+		if (height < minRows) {
+			const msg = "Terminal too small";
+			const frame: string[] = [];
+			for (let i = 0; i < height; i++) {
+				frame.push(i === Math.floor(height / 2) ? msg.slice(0, width) : "");
+			}
+			this.writeFullscreenFrame(frame, width, height);
+			return;
+		}
+
+		// Render each region
+		const headerComp = this.regions.get("header");
+		const contentComp = this.regions.get("content");
+		const editorComp = this.regions.get("editor");
+		const footerComp = this.regions.get("footer");
+
+		const headerLines = headerComp ? headerComp.render(width) : [];
+		const editorLines = editorComp ? editorComp.render(width) : [];
+		const footerLines = footerComp ? footerComp.render(width) : [];
+
+		// Content region fills remaining space
+		const fixedHeight = headerLines.length + editorLines.length + footerLines.length;
+		const contentHeight = Math.max(1, height - fixedHeight);
+
+		// Render content
+		const allContentLines = contentComp ? contentComp.render(width) : [];
+		this.contentTotalLines = allContentLines.length;
+
+		// Auto-scroll to bottom if user hasn't manually scrolled up
+		const maxOffset = Math.max(0, allContentLines.length - contentHeight);
+		if (!this.userScrolled) {
+			this.contentScrollOffset = maxOffset;
+		} else {
+			// Clamp scroll offset to valid range (content may have shrunk)
+			this.contentScrollOffset = Math.min(this.contentScrollOffset, maxOffset);
+		}
+
+		// Slice visible content lines
+		const visibleContent = allContentLines.slice(this.contentScrollOffset, this.contentScrollOffset + contentHeight);
+
+		// Pad content to fill the region if content is shorter
+		while (visibleContent.length < contentHeight) {
+			visibleContent.push("");
+		}
+
+		// Compose full frame: header + content + editor + footer
+		let frame = [...headerLines, ...visibleContent, ...editorLines, ...footerLines];
+
+		// Composite overlays
+		if (this.overlayStack.length > 0) {
+			frame = this.compositeOverlaysFullscreen(frame, width, height);
+		}
+
+		// Extract cursor position before line resets
+		const cursorPos = this.extractCursorPosition(frame, height);
+
+		// Apply line resets
+		frame = this.applyLineResets(frame);
+
+		// Ensure frame is exactly `height` lines
+		while (frame.length < height) {
+			frame.push("");
+		}
+		if (frame.length > height) {
+			frame = frame.slice(0, height);
+		}
+
+		this.writeFullscreenFrame(frame, width, height);
+
+		// Position hardware cursor for IME
+		if (cursorPos && this.showHardwareCursor) {
+			// In fullscreen, cursorPos.row is relative to the frame
+			const row = Math.max(0, Math.min(cursorPos.row, height - 1));
+			const col = Math.max(0, cursorPos.col);
+			this.terminal.moveTo(row + 1, col + 1); // 1-indexed
+			this.terminal.showCursor();
+		} else {
+			this.terminal.hideCursor();
+		}
+	}
+
+	/**
+	 * Write a fullscreen frame with differential rendering.
+	 * Only rewrites lines that changed from the previous frame.
+	 */
+	private writeFullscreenFrame(frame: string[], width: number, height: number): void {
+		const prev = this.previousFullscreenLines;
+		const widthChanged = this.previousWidth !== 0 && this.previousWidth !== width;
+
+		let buffer = "\x1b[?2026h"; // Begin synchronized output
+
+		if (prev.length === 0 || widthChanged) {
+			// Full render: write all lines
+			for (let i = 0; i < frame.length; i++) {
+				buffer += `\x1b[${i + 1};1H\x1b[2K${frame[i]}`;
+			}
+			this.fullRedrawCount++;
+		} else {
+			// Differential: only write changed lines
+			for (let i = 0; i < frame.length; i++) {
+				const prevLine = i < prev.length ? prev[i] : "";
+				if (frame[i] !== prevLine) {
+					buffer += `\x1b[${i + 1};1H\x1b[2K${frame[i]}`;
+				}
+			}
+		}
+
+		buffer += "\x1b[?2026l"; // End synchronized output
+		this.terminal.write(buffer);
+
+		this.previousFullscreenLines = frame;
+		this.previousWidth = width;
+		this.previousHeight = height;
+	}
+
+	/**
+	 * Composite overlays for fullscreen mode.
+	 * Similar to compositeOverlays but works within the fixed viewport bounds.
+	 */
+	private compositeOverlaysFullscreen(lines: string[], termWidth: number, termHeight: number): string[] {
+		if (this.overlayStack.length === 0) return lines;
+		const result = [...lines];
+
+		// Ensure result is exactly termHeight lines
+		while (result.length < termHeight) {
+			result.push("");
+		}
+
+		const visibleEntries = this.overlayStack.filter((e) => this.isOverlayVisible(e));
+		visibleEntries.sort((a, b) => a.focusOrder - b.focusOrder);
+
+		for (const entry of visibleEntries) {
+			const { component, options } = entry;
+
+			const { width, maxHeight } = this.resolveOverlayLayout(options, 0, termWidth, termHeight);
+			let overlayLines = component.render(width);
+
+			if (maxHeight !== undefined && overlayLines.length > maxHeight) {
+				overlayLines = overlayLines.slice(0, maxHeight);
+			}
+
+			const { row, col } = this.resolveOverlayLayout(options, overlayLines.length, termWidth, termHeight);
+
+			for (let i = 0; i < overlayLines.length; i++) {
+				const idx = row + i;
+				if (idx >= 0 && idx < termHeight) {
+					const truncatedOverlayLine =
+						visibleWidth(overlayLines[i]) > width
+							? sliceByColumn(overlayLines[i], 0, width, true)
+							: overlayLines[i];
+					result[idx] = this.compositeLineAt(result[idx], truncatedOverlayLine, col, width, termWidth);
+				}
+			}
+		}
+
+		return result;
 	}
 }
