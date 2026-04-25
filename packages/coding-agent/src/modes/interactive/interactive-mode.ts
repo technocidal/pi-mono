@@ -3966,6 +3966,7 @@ export class InteractiveMode {
 					},
 					onShowTerminalProgressChange: (enabled) => {
 						this.settingsManager.setShowTerminalProgress(enabled);
+					},
 					onFullscreenChange: (enabled) => {
 						this.settingsManager.setFullscreen(enabled);
 						if (enabled && !this.ui.fullscreen) {
