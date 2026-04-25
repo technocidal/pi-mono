@@ -71,6 +71,7 @@ export {
 	detectCapabilities,
 	encodeITerm2,
 	encodeKitty,
+	encodeKittyPlaceholder,
 	getCapabilities,
 	getCellDimensions,
 	getGifDimensions,
@@ -83,11 +84,13 @@ export {
 	type ImageProtocol,
 	type ImageRenderOptions,
 	imageFallback,
+	isPlaceholderLine,
 	renderImage,
 	resetCapabilitiesCache,
 	setCapabilities,
 	setCellDimensions,
 	type TerminalCapabilities,
+	transmitKittyImage,
 } from "./terminal-image.js";
 export {
 	type Component,
